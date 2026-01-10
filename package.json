@@ -1,0 +1,38 @@
+{
+  "name": "@dotdo/npmx",
+  "version": "0.0.1",
+  "description": "NPM/NPX capabilities for edge runtimes - package management without Node.js",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./registry": "./dist/registry/index.js",
+    "./resolver": "./dist/resolver/index.js",
+    "./loader": "./dist/loader/index.js",
+    "./runner": "./dist/runner/index.js"
+  },
+  "scripts": {
+    "dev": "tsup --watch",
+    "build": "tsup",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "semver": "^7.6.0",
+    "tar": "^7.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^2.0.0"
+  },
+  "peerDependencies": {
+    "@dotdo/fsx": "*",
+    "@dotdo/bashx": "*"
+  },
+  "keywords": ["npm", "npx", "edge", "cloudflare", "workers", "package-manager"],
+  "license": "MIT"
+}
