@@ -85,32 +85,38 @@ case 'npx':
   return this.npmx.execute(command, args)
 ```
 
-## Files
+## Project Structure
 
 ```
-src/
-├── index.ts           # Main exports
-├── registry/          # npm registry client
-│   ├── client.ts      # Registry API
-│   ├── cache.ts       # R2 package cache
-│   └── extract.ts     # Tarball extraction
-├── resolver/          # Dependency resolution
-│   ├── tree.ts        # Dependency tree builder
-│   ├── semver.ts      # Version resolution
-│   └── lockfile.ts    # Lock file handling
-├── loader/            # Module loading
-│   ├── esm.ts         # ESM loader
-│   ├── cjs.ts         # CJS transformation
-│   └── polyfills.ts   # Node.js polyfills
-├── runner/            # Command execution
-│   ├── npm.ts         # npm commands
-│   ├── npx.ts         # npx execution
-│   └── scripts.ts     # package.json scripts
-└── commands/          # Individual command implementations
-    ├── install.ts
-    ├── run.ts
-    ├── exec.ts
-    └── publish.ts
+core/                  # Pure library with ZERO Cloudflare dependencies
+├── index.ts           # Main exports (semver, resolver, pkg, tarball)
+├── package.json       # Published as @dotdo/npmx
+├── semver/            # npm-compatible semantic versioning
+│   ├── index.ts       # Re-exports all semver functions
+│   ├── parse.ts       # Version parsing, SemVer class
+│   ├── compare.ts     # Comparison functions (lt, gt, eq, etc.)
+│   ├── range.ts       # Range resolution (satisfies, maxSatisfying)
+│   └── types.ts       # Type definitions
+├── resolver/          # Dependency tree resolution
+│   ├── index.ts       # Re-exports, DependencyTreeBuilder
+│   ├── tree.ts        # Tree building with circular detection
+│   ├── hoisting.ts    # npm-style dependency hoisting
+│   ├── lockfile.ts    # package-lock.json v3 generation
+│   └── types.ts       # Type definitions
+├── package/           # package.json handling
+│   └── index.ts       # Parse, validate, resolve exports
+└── tarball/           # Tarball extraction and creation
+    ├── index.ts       # Re-exports all tarball functions
+    ├── decompress.ts  # Gzip compression/decompression
+    ├── tar.ts         # USTAR/PAX header parsing
+    ├── extract.ts     # Tarball extraction
+    ├── create.ts      # Tarball creation
+    ├── integrity.ts   # SRI hash calculation
+    └── types.ts       # Type definitions
+
+cli/                   # CLI commands (uses core/)
+src/                   # Cloudflare-specific implementation
+test/                  # Test files
 ```
 
 ## Testing

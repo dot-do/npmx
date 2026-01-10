@@ -7,10 +7,10 @@
   "types": "dist/index.d.ts",
   "exports": {
     ".": "./dist/index.js",
-    "./registry": "./dist/registry/index.js",
+    "./semver": "./dist/semver/index.js",
     "./resolver": "./dist/resolver/index.js",
-    "./loader": "./dist/loader/index.js",
-    "./runner": "./dist/runner/index.js"
+    "./package": "./dist/package/index.js",
+    "./tarball": "./dist/tarball/index.js"
   },
   "scripts": {
     "dev": "tsup --watch",
