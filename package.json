@@ -10,24 +10,30 @@
     "./semver": "./dist/semver/index.js",
     "./resolver": "./dist/resolver/index.js",
     "./package": "./dist/package/index.js",
-    "./tarball": "./dist/tarball/index.js"
+    "./tarball": "./dist/tarball/index.js",
+    "./do": "./src/do/index.js"
   },
   "scripts": {
     "dev": "tsup --watch",
+    "dev:worker": "wrangler dev",
     "build": "tsup",
     "test": "vitest",
     "test:run": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "deploy": "wrangler deploy"
   },
   "dependencies": {
+    "hono": "^4.0.0",
     "semver": "^7.6.0",
     "tar": "^7.0.0"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.0.0",
     "@types/node": "^20.0.0",
     "tsup": "^8.0.0",
     "typescript": "^5.4.0",
-    "vitest": "^2.0.0"
+    "vitest": "^2.0.0",
+    "wrangler": "^3.0.0"
   },
   "peerDependencies": {
     "@dotdo/fsx": "*",
