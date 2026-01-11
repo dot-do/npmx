@@ -48,7 +48,7 @@ describe('RegistryBackend Interface', () => {
           modified: '2020-01-01T00:00:00.000Z',
           '4.17.21': '2020-01-01T00:00:00.000Z',
         },
-        maintainers: [{ name: 'jdalton', email: 'john@example.com' }],
+        maintainers: [{ name: 'jdalton', email: 'john@example.com.ai' }],
         license: 'MIT',
         readme: '# Lodash',
       }
@@ -107,7 +107,7 @@ describe('RegistryBackend Interface', () => {
         description: 'Lodash modular utilities',
         keywords: ['util', 'functional'],
         date: '2020-01-01T00:00:00.000Z',
-        publisher: { name: 'jdalton', email: 'john@example.com' },
+        publisher: { name: 'jdalton', email: 'john@example.com.ai' },
         score: {
           final: 0.9,
           detail: {
@@ -157,7 +157,7 @@ describe('RegistryBackend Interface', () => {
               dependencies: {},
               devDependencies: {},
               dist: {
-                tarball: 'https://example.com/test-package-1.0.0.tgz',
+                tarball: 'https://example.com.ai/test-package-1.0.0.tgz',
                 shasum: 'abc123',
                 integrity: 'sha512-xyz',
               },
@@ -181,7 +181,7 @@ describe('RegistryBackend Interface', () => {
               dependencies: {},
               devDependencies: {},
               dist: {
-                tarball: 'https://example.com/@myorg/utils-2.0.0.tgz',
+                tarball: 'https://example.com.ai/@myorg/utils-2.0.0.tgz',
                 shasum: 'def456',
                 integrity: 'sha512-abc',
               },
@@ -206,7 +206,7 @@ describe('RegistryBackend Interface', () => {
               dependencies: {},
               devDependencies: {},
               dist: {
-                tarball: 'https://example.com/multi-version-pkg-1.0.0.tgz',
+                tarball: 'https://example.com.ai/multi-version-pkg-1.0.0.tgz',
                 shasum: 'v1hash',
                 integrity: 'sha512-v1',
               },
@@ -216,7 +216,7 @@ describe('RegistryBackend Interface', () => {
               dependencies: { lodash: '^4.0.0' },
               devDependencies: {},
               dist: {
-                tarball: 'https://example.com/multi-version-pkg-2.0.0.tgz',
+                tarball: 'https://example.com.ai/multi-version-pkg-2.0.0.tgz',
                 shasum: 'v2hash',
                 integrity: 'sha512-v2',
               },
@@ -226,7 +226,7 @@ describe('RegistryBackend Interface', () => {
               dependencies: {},
               devDependencies: {},
               dist: {
-                tarball: 'https://example.com/multi-version-pkg-3.0.0-beta.1.tgz',
+                tarball: 'https://example.com.ai/multi-version-pkg-3.0.0-beta.1.tgz',
                 shasum: 'v3hash',
                 integrity: 'sha512-v3',
               },
@@ -274,7 +274,7 @@ describe('RegistryBackend Interface', () => {
               dependencies: {},
               devDependencies: {},
               dist: {
-                tarball: 'https://example.com/tarball-test-1.0.0.tgz',
+                tarball: 'https://example.com.ai/tarball-test-1.0.0.tgz',
                 shasum: 'tarhash',
                 integrity: 'sha512-tar',
               },
@@ -1007,7 +1007,7 @@ describe('RegistryBackend Interface', () => {
             engines: { node: '>=18', npm: '>=9' },
             repository: { type: 'git', url: 'https://github.com/test/full-metadata' },
             dist: {
-              tarball: 'https://example.com/full-metadata-1.0.0.tgz',
+              tarball: 'https://example.com.ai/full-metadata-1.0.0.tgz',
               shasum: 'abc123',
               integrity: 'sha512-xyz',
               fileCount: 50,

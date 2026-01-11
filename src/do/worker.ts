@@ -33,7 +33,10 @@
 
 import { DurableObject } from 'cloudflare:workers'
 import { Hono } from 'hono'
-import { NpmDO, type InstallResult, type ExecResult, type PackageMetadata } from './NpmDO.js'
+import type { Context } from 'hono'
+import { NpmDO, type NpmEnv, type ExecResult, type PackageMetadata } from './NpmDO.js'
+import type { InstallResult } from '../types.js'
+import { validateNamespace } from './namespace.js'
 
 // ============================================================================
 // ENVIRONMENT TYPES
@@ -41,23 +44,29 @@ import { NpmDO, type InstallResult, type ExecResult, type PackageMetadata } from
 
 /**
  * Environment bindings for npmx-do
+ * Re-exported from NpmDO for convenience
  */
-export interface Env {
-  /** Self-binding for NpmDO */
-  NPMX: DurableObjectNamespace
-
-  /** Service binding to fsx-do for filesystem operations */
-  FSX: Fetcher
-
-  /** Service binding to bashx-do for shell execution */
-  BASHX: Fetcher
-}
+export type Env = NpmEnv
 
 // ============================================================================
 // RE-EXPORT NpmDO for wrangler
 // ============================================================================
 
 export { NpmDO }
+
+// ============================================================================
+// HONO TYPE DEFINITIONS
+// ============================================================================
+
+/**
+ * Hono app type with environment bindings
+ */
+type NpmxApp = Hono<{ Bindings: Env }>
+
+/**
+ * Context type for route handlers with typed env access
+ */
+export type NpmxContext = Context<{ Bindings: Env }>
 
 // ============================================================================
 // HTTP API WRAPPER
@@ -69,7 +78,7 @@ export { NpmDO }
  * Provides REST/RPC endpoints for npm/npx operations
  */
 export class NpmDOWrapper extends DurableObject<Env> {
-  private app: Hono
+  private app: NpmxApp
   private npmDO: NpmDO
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -78,8 +87,8 @@ export class NpmDOWrapper extends DurableObject<Env> {
     this.app = this.createApp()
   }
 
-  private createApp(): Hono {
-    const app = new Hono()
+  private createApp(): NpmxApp {
+    const app = new Hono<{ Bindings: Env }>()
 
     // Health check
     app.get('/health', (c) => c.json({ status: 'ok', service: 'npmx-do' }))
@@ -292,8 +301,27 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url)
 
-    // Route to DO based on path or use default
-    const namespace = url.pathname.split('/')[1] ?? 'default'
+    // Extract namespace from path (first path segment) or use default
+    const pathSegment = url.pathname.split('/')[1] ?? ''
+    const namespace = pathSegment || 'default'
+
+    // Security: Validate namespace to prevent path traversal and injection attacks
+    // This blocks malicious namespaces like "../admin", extremely long strings,
+    // or strings with special characters that could cause issues
+    if (!validateNamespace(namespace)) {
+      return new Response(
+        JSON.stringify({
+          error: 'Invalid namespace',
+          message: 'Namespace must be 1-64 characters, alphanumeric with hyphens and underscores only',
+        }),
+        {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      )
+    }
+
+    // Route to DO with validated namespace
     const id = env.NPMX.idFromName(namespace)
     const stub = env.NPMX.get(id)
 

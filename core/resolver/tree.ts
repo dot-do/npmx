@@ -19,6 +19,7 @@
  */
 
 import { satisfies, maxSatisfying, compare as semverCompare, valid as semverValid } from '../semver'
+import { ResolutionError } from '../errors'
 import type {
   DependencyTree,
   DependencyNode,
@@ -508,13 +509,13 @@ export class DependencyTreeBuilder {
         ctx.versionCache.set(cacheKey, range)
         return range
       }
-      throw new Error(`Version ${range} not found for ${name}`)
+      throw new ResolutionError(`Version ${range} not found for ${name}`, name, range)
     }
 
     // Find max satisfying version
     const resolved = semver.maxSatisfying(versions, range)
     if (!resolved) {
-      throw new Error(`No version of ${name} satisfies ${range}`)
+      throw new ResolutionError(`No version of ${name} satisfies ${range}`, name, range)
     }
 
     ctx.versionCache.set(cacheKey, resolved)

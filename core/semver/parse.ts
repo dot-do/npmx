@@ -11,6 +11,7 @@ import type {
   BuildIdentifier,
   ReleaseType,
 } from './types'
+import { ParseError } from '../errors'
 
 // Regex patterns for semver parsing
 // Strict pattern: no leading v/=, no whitespace, no leading zeros
@@ -55,7 +56,7 @@ function parsePrerelease(
   return prerelease.split('.').map((id) => {
     // In strict mode, numeric identifiers must not have leading zeros
     if (!loose && /^[0-9]+$/.test(id) && hasLeadingZero(id)) {
-      throw new Error(`Invalid prerelease identifier: ${id}`)
+      throw new ParseError(`Invalid prerelease identifier: ${id}`, { version: prerelease })
     }
     // Convert pure numeric strings to numbers
     if (/^[0-9]+$/.test(id)) {
@@ -138,7 +139,7 @@ export class SemVer implements SemVerObject {
       parsed = parse(version, { ...options, loose: true })
     }
     if (!parsed) {
-      throw new Error(`Invalid version: ${version}`)
+      throw new ParseError(`Invalid version: ${version}`, { version })
     }
 
     this.major = parsed.major

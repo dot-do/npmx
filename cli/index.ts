@@ -55,9 +55,10 @@ interface MockRegistry {
  */
 interface MockPackageManager {
   install: (packages: string[], options?: { dev?: boolean; exact?: boolean }) => Promise<{
-    added: Array<{ name: string; version: string }>
+    installed: Array<{ name: string; version: string }>
     removed: Array<{ name: string; version: string }>
     updated: Array<{ name: string; from: string; to: string }>
+    stats: { resolved: number; cached: number; duration: number }
   }>
   uninstall: (packages: string[]) => Promise<void>
   list: (options?: { depth?: number }) => Promise<PackageEntry[]>
@@ -283,7 +284,7 @@ async function executeInstall(args: string[], context: CLIContext): Promise<Comm
       exact: Boolean(options.saveExact),
     })
 
-    stdout(formatInstallResult(result.added, result.removed, result.updated))
+    stdout(formatInstallResult(result.installed, result.removed, result.updated))
     return { exitCode: 0 }
   } catch (err: unknown) {
     stderr(formatError('install', err))

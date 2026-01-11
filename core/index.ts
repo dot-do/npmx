@@ -43,3 +43,14 @@ export type {
   IntegrityHash,
   CreateOptions,
 } from './tarball/index.js'
+
+// Errors - structured error types
+export * from './errors/index.js'
+
+// Cache - LRU cache for bounded memory usage
+export * as cache from './cache/index.js'
+export type {
+  CacheOptions,
+  CacheStats,
+} from './cache/index.js'
+export { LRUCache } from './cache/index.js'

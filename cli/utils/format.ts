@@ -106,14 +106,14 @@ export function formatPackageInfo(
  * Format install result
  */
 export function formatInstallResult(
-  added: Array<{ name: string; version: string }>,
+  installed: Array<{ name: string; version: string }>,
   removed: Array<{ name: string; version: string }>,
   updated: Array<{ name: string; from: string; to: string }>
 ): string {
   const lines: string[] = []
 
-  if (added.length > 0) {
-    lines.push(`added ${added.length} packages`)
+  if (installed.length > 0) {
+    lines.push(`added ${installed.length} packages`)
   }
   if (removed.length > 0) {
     lines.push(`removed ${removed.length} packages`)

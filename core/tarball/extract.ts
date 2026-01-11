@@ -6,6 +6,7 @@
 
 import { decompress, isGzipData } from './decompress'
 import { parseTarHeader, parsePaxHeaders } from './tar'
+import { SecurityError } from '../errors'
 import {
   TAR_BLOCK_SIZE,
   type TarEntry,
@@ -189,12 +190,12 @@ function validatePath(path: string): void {
 
   // Check for path traversal
   if (normalized.includes('../') || normalized.startsWith('/') || normalized.includes('/./')) {
-    throw new Error(`Security error: path traversal detected in "${path}"`)
+    throw new SecurityError(`Path traversal detected in "${path}"`, { severity: 'critical' })
   }
 
   // Check for absolute paths on Windows
   if (/^[a-zA-Z]:/.test(normalized)) {
-    throw new Error(`Security error: absolute path detected in "${path}"`)
+    throw new SecurityError(`Absolute path detected in "${path}"`, { severity: 'critical' })
   }
 }
 
@@ -211,7 +212,7 @@ function validateSymlinkTarget(path: string, target: string): void {
     if (part === '..') {
       depth--
       if (depth < 0) {
-        throw new Error(`Security error: symlink escape detected in "${path}" -> "${target}"`)
+        throw new SecurityError(`Symlink escape detected in "${path}" -> "${target}"`, { severity: 'critical' })
       }
     } else if (part !== '.') {
       depth++

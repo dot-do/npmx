@@ -984,7 +984,7 @@ describe('Dependency Tree Resolution', () => {
       const tree = await builder.resolve({
         dependencies: {
           lodash: '^4.17.0',
-          // 'some-pkg': 'https://example.com/pkg.tgz'
+          // 'some-pkg': 'https://example.com.ai/pkg.tgz'
         },
       })
 

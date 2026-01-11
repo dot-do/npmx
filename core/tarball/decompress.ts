@@ -5,6 +5,7 @@
  */
 
 import { GZIP_MAGIC } from './types'
+import { TarballError } from '../errors'
 
 /**
  * Decompress gzip data
@@ -16,11 +17,11 @@ import { GZIP_MAGIC } from './types'
 export async function decompress(data: Uint8Array): Promise<Uint8Array> {
   // Check for gzip magic bytes
   if (data.length < 10) {
-    throw new Error('Invalid gzip data: too short')
+    throw new TarballError('Invalid gzip data: too short')
   }
 
   if (data[0] !== GZIP_MAGIC[0] || data[1] !== GZIP_MAGIC[1]) {
-    throw new Error('Invalid gzip data: missing magic bytes')
+    throw new TarballError('Invalid gzip data: missing magic bytes')
   }
 
   try {
@@ -56,7 +57,7 @@ export async function decompress(data: Uint8Array): Promise<Uint8Array> {
     return result
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error'
-    throw new Error(`Failed to decompress gzip data: ${message}`)
+    throw new TarballError(`Failed to decompress gzip data: ${message}`)
   }
 }
 
@@ -108,6 +109,6 @@ export async function compress(data: Uint8Array): Promise<Uint8Array> {
     return result
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error'
-    throw new Error(`Failed to compress data: ${message}`)
+    throw new TarballError(`Failed to compress data: ${message}`)
   }
 }

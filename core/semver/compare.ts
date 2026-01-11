@@ -6,6 +6,7 @@
 
 import type { CompareResult, ParseOptions } from './types'
 import { parse, SemVer, compareVersions } from './parse'
+import { ParseError } from '../errors'
 
 /**
  * Compare two versions.
@@ -23,7 +24,8 @@ export function compare(
   const b = v2 instanceof SemVer ? v2 : parse(v2, options)
 
   if (!a || !b) {
-    throw new Error(`Invalid version: ${!a ? v1 : v2}`)
+    const invalid = !a ? String(v1) : String(v2)
+    throw new ParseError(`Invalid version: ${invalid}`, { version: invalid })
   }
 
   return compareVersions(a, b)

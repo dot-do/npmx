@@ -11,6 +11,7 @@
     "./resolver": "./dist/resolver/index.js",
     "./package": "./dist/package/index.js",
     "./tarball": "./dist/tarball/index.js",
+    "./errors": "./dist/errors/index.js",
     "./do": "./src/do/index.js"
   },
   "scripts": {

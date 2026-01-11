@@ -5,12 +5,109 @@
  * - Package installation and resolution
  * - npx binary execution via esm.sh
  * - Cached package metadata and tarballs
+ * - WorkflowContext ($) for event handling, scheduling, and cross-DO RPC
+ *
+ * Extends dotdo's DO base class for full WorkflowContext integration:
+ * - $.on.Package.installed(handler) - Event handlers
+ * - $.every.hour(handler) - Scheduling
+ * - $.send/$.try/$.do - Execution modes
+ * - $.Package(id).method() - Cross-DO RPC
  *
  * @module npmx/do/NpmDO
  */
 
-import { DurableObject } from 'cloudflare:workers'
-import type { Env } from './worker.js'
+import { DO, type Env as BaseEnv } from '../../../../objects/DO'
+import type { InstallResult } from '../types.js'
+import {
+  PackageNotFoundError,
+  FetchError,
+  TarballError,
+  ExecError,
+} from '../../core/errors/index.js'
+import { encodePackageName } from '../../core/package/name.js'
+import { LRUCache, type CacheStats } from '../../core/cache/lru.js'
+import {
+  fetchWithTimeout,
+  FetchTimeoutError,
+  DEFAULT_FETCH_TIMEOUT,
+} from './fetch-timeout.js'
+
+/**
+ * Extended environment for NpmDO with npm-specific bindings
+ */
+export interface NpmEnv extends BaseEnv {
+  /** Self-binding for NpmDO */
+  NPMX?: DurableObjectNamespace
+
+  /** Service binding to fsx-do for filesystem operations */
+  FSX?: Fetcher
+
+  /** Service binding to bashx-do for shell execution */
+  BASHX?: Fetcher
+}
+
+// ============================================================================
+// SHELL ESCAPING (SECURITY)
+// ============================================================================
+
+/**
+ * Characters that are safe in shell without quoting.
+ * Includes: alphanumeric, underscore, hyphen, period, forward slash, colon, equals, at
+ */
+const SAFE_CHARS_REGEX = /^[\x20-\x7E]*$/
+const SAFE_UNQUOTED_REGEX = /^[a-zA-Z0-9_\-./:=@]+$/
+
+/**
+ * Escape a single argument for safe shell use.
+ * Uses POSIX-compliant single-quote escaping which preserves all characters literally.
+ *
+ * This prevents command injection attacks where user-provided args like '; rm -rf /'
+ * could be executed as shell commands.
+ *
+ * @param value - Value to escape (will be converted to string)
+ * @returns Shell-safe escaped string
+ *
+ * @example
+ * ```typescript
+ * shellEscapeArg('hello world')     // => 'hello world'
+ * shellEscapeArg("it's fine")       // => 'it'"'"'s fine'
+ * shellEscapeArg('file; rm -rf /') // => 'file; rm -rf /'
+ * shellEscapeArg('simple')         // => simple (no quotes needed)
+ * ```
+ */
+function shellEscapeArg(value: unknown): string {
+  const str = String(value)
+
+  // Empty string needs explicit quoting
+  if (str === '') {
+    return "''"
+  }
+
+  // If only safe ASCII characters that don't need quoting, return as-is
+  if (SAFE_CHARS_REGEX.test(str) && SAFE_UNQUOTED_REGEX.test(str)) {
+    return str
+  }
+
+  // Use single quotes - they're the safest for shell escaping
+  // Single quotes preserve everything literally except single quotes themselves
+  // To include a single quote: end quote, add escaped quote, start quote again
+  return "'" + str.replace(/'/g, "'\"'\"'") + "'"
+}
+
+/**
+ * Default maximum size for the package metadata cache.
+ * Prevents OOM in long-running DOs by limiting unbounded growth.
+ */
+const DEFAULT_CACHE_SIZE = 100
+
+/**
+ * Registry fetch timeout configuration.
+ * Prevents indefinite hangs when registry is slow/unresponsive.
+ * Includes retry with exponential backoff for transient failures.
+ */
+const REGISTRY_TIMEOUT = DEFAULT_FETCH_TIMEOUT // 30 seconds
+const REGISTRY_RETRIES = 2 // Try 3 times total (initial + 2 retries)
+const REGISTRY_BACKOFF = 1000 // 1 second base backoff (1s, 2s, 4s)
 
 /**
  * Package metadata from registry
@@ -26,15 +123,8 @@ export interface PackageMetadata {
   peerDependencies?: Record<string, string>
 }
 
-/**
- * Install result
- */
-export interface InstallResult {
-  installed: Array<{ name: string; version: string }>
-  resolved: number
-  cached: number
-  duration: number
-}
+// InstallResult is imported from ../types.js
+export type { InstallResult } from '../types.js'
 
 /**
  * Execution result from npx
@@ -51,15 +141,32 @@ export interface ExecResult {
  *
  * Each instance represents a package management context (like a project directory).
  * State is persisted across requests.
+ *
+ * Extends DO to gain WorkflowContext ($) with:
+ * - Event handlers: $.on.Package.installed(handler)
+ * - Scheduling: $.every.hour(handler)
+ * - Execution modes: $.send(), $.try(), $.do()
+ * - Cross-DO RPC: $.Package(id).resolve()
  */
-export class NpmDO extends DurableObject<Env> {
-  /** In-memory cache of resolved packages */
-  private packageCache: Map<string, PackageMetadata> = new Map()
+export class NpmDO extends DO<NpmEnv> {
+  /**
+   * Static $type property - the class type discriminator
+   */
+  static readonly $type: string = 'NpmDO'
+
+  /**
+   * LRU cache of resolved packages.
+   * Bounded to prevent OOM in long-running DOs.
+   * Default max size: 100 entries (configurable via setCacheSize).
+   */
+  private packageCache: LRUCache<string, PackageMetadata> = new LRUCache({
+    maxSize: DEFAULT_CACHE_SIZE,
+  })
 
   /** Registry URL */
   private registry: string = 'https://registry.npmjs.org'
 
-  constructor(ctx: DurableObjectState, env: Env) {
+  constructor(ctx: DurableObjectState, env: NpmEnv) {
     super(ctx, env)
   }
 
@@ -79,20 +186,32 @@ export class NpmDO extends DurableObject<Env> {
       return cached
     }
 
-    // Fetch from registry
+    // Fetch from registry with timeout protection
+    // Encode package name for URL (scoped packages need %2F encoding)
+    const encodedName = encodePackageName(name)
     const url = version
-      ? `${this.registry}/${name}/${version}`
-      : `${this.registry}/${name}/latest`
+      ? `${this.registry}/${encodedName}/${version}`
+      : `${this.registry}/${encodedName}/latest`
 
-    const response = await fetch(url, {
-      headers: { Accept: 'application/json' },
-    })
+    let response: Response
+    try {
+      response = await fetchWithTimeout(
+        url,
+        { headers: { Accept: 'application/json' } },
+        { timeout: REGISTRY_TIMEOUT, retries: REGISTRY_RETRIES, retryBackoff: REGISTRY_BACKOFF }
+      )
+    } catch (error) {
+      if (error instanceof FetchTimeoutError) {
+        throw new FetchError(`Registry timeout fetching ${name}: ${error.message}`, {
+          status: 0,
+          registry: this.registry,
+        })
+      }
+      throw error
+    }
 
     if (!response.ok) {
-      throw Object.assign(new Error(`Package not found: ${name}`), {
-        code: 'ENOTFOUND',
-        status: response.status,
-      })
+      throw new PackageNotFoundError(name, version)
     }
 
     const metadata = (await response.json()) as PackageMetadata
@@ -109,12 +228,28 @@ export class NpmDO extends DurableObject<Env> {
   async search(query: string, limit = 20): Promise<Array<{ name: string; version: string; description?: string | undefined }>> {
     const url = `${this.registry}/-/v1/search?text=${encodeURIComponent(query)}&size=${limit}`
 
-    const response = await fetch(url, {
-      headers: { Accept: 'application/json' },
-    })
+    let response: Response
+    try {
+      response = await fetchWithTimeout(
+        url,
+        { headers: { Accept: 'application/json' } },
+        { timeout: REGISTRY_TIMEOUT, retries: REGISTRY_RETRIES, retryBackoff: REGISTRY_BACKOFF }
+      )
+    } catch (error) {
+      if (error instanceof FetchTimeoutError) {
+        throw new FetchError(`Registry timeout during search: ${error.message}`, {
+          status: 0,
+          registry: this.registry,
+        })
+      }
+      throw error
+    }
 
     if (!response.ok) {
-      throw new Error(`Search failed: ${response.statusText}`)
+      throw new FetchError(`Search failed: ${response.statusText}`, {
+        status: response.status,
+        registry: this.registry,
+      })
     }
 
     const data = (await response.json()) as {
@@ -178,9 +313,13 @@ export class NpmDO extends DurableObject<Env> {
 
     return {
       installed,
-      resolved,
-      cached,
-      duration: Date.now() - start,
+      removed: [],
+      updated: [],
+      stats: {
+        resolved,
+        cached,
+        duration: Date.now() - start,
+      },
     }
   }
 
@@ -221,10 +360,28 @@ export class NpmDO extends DurableObject<Env> {
 
     const tarballUrl = registryMeta.dist.tarball
 
-    // Fetch tarball
-    const tarballResponse = await fetch(tarballUrl)
+    // Fetch tarball with timeout protection
+    let tarballResponse: Response
+    try {
+      tarballResponse = await fetchWithTimeout(
+        tarballUrl,
+        {},
+        { timeout: REGISTRY_TIMEOUT, retries: REGISTRY_RETRIES, retryBackoff: REGISTRY_BACKOFF }
+      )
+    } catch (error) {
+      if (error instanceof FetchTimeoutError) {
+        throw new TarballError(
+          `Tarball download timeout: ${error.message}`,
+          metadata.name
+        )
+      }
+      throw error
+    }
     if (!tarballResponse.ok) {
-      throw new Error(`Failed to download tarball: ${tarballResponse.statusText}`)
+      throw new TarballError(
+        `Failed to download tarball: ${tarballResponse.statusText}`,
+        metadata.name
+      )
     }
 
     const tarballBuffer = await tarballResponse.arrayBuffer()
@@ -249,10 +406,27 @@ export class NpmDO extends DurableObject<Env> {
    * Fetch raw package.json from registry (includes dist info)
    */
   private async fetchPackageJson(name: string, version: string): Promise<unknown> {
-    const url = `${this.registry}/${name}/${version}`
-    const response = await fetch(url, {
-      headers: { Accept: 'application/json' },
-    })
+    // Encode package name for URL (scoped packages need %2F encoding)
+    const encodedName = encodePackageName(name)
+    const url = `${this.registry}/${encodedName}/${version}`
+
+    let response: Response
+    try {
+      response = await fetchWithTimeout(
+        url,
+        { headers: { Accept: 'application/json' } },
+        { timeout: REGISTRY_TIMEOUT, retries: REGISTRY_RETRIES, retryBackoff: REGISTRY_BACKOFF }
+      )
+    } catch (error) {
+      if (error instanceof FetchTimeoutError) {
+        throw new FetchError(`Registry timeout fetching package.json for ${name}@${version}: ${error.message}`, {
+          status: 0,
+          registry: this.registry,
+        })
+      }
+      throw error
+    }
+
     return response.json()
   }
 
@@ -291,7 +465,9 @@ export class NpmDO extends DurableObject<Env> {
         }
       }
 
-      throw new Error(`Cannot execute ${command}: no execution runtime available`)
+      throw new ExecError(`Cannot execute ${command}: no execution runtime available`, {
+        package: command,
+      })
     } catch (error) {
       const err = error as Error
       return {
@@ -468,13 +644,19 @@ export class NpmDO extends DurableObject<Env> {
         }
       }
 
+      // SECURITY: Escape all user-provided args to prevent command injection
+      // Issue: dotdo-8y5m8 - args like '; rm -rf /' could execute arbitrary commands
+      const escapedArgs = args.length > 0
+        ? ' ' + args.map(shellEscapeArg).join(' ')
+        : ''
+
       const bashResponse = await this.env.BASHX.fetch('https://bashx.do/rpc', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           method: 'run',
           params: {
-            script: `${scriptCommand} ${args.join(' ')}`.trim(),
+            script: `${scriptCommand}${escapedArgs}`,
             options: { env: options?.env },
           },
         }),
@@ -547,5 +729,33 @@ export class NpmDO extends DurableObject<Env> {
    */
   clearCache(): void {
     this.packageCache.clear()
+  }
+
+  /**
+   * Get cache statistics for monitoring.
+   * Useful for debugging and monitoring cache effectiveness.
+   *
+   * @returns Cache statistics including hits, misses, evictions, and hit rate
+   */
+  getCacheStats(): CacheStats {
+    return this.packageCache.getStats()
+  }
+
+  /**
+   * Resize the package cache.
+   * Use this to adjust cache size under memory pressure or increased load.
+   *
+   * @param maxSize - New maximum number of entries
+   */
+  setCacheSize(maxSize: number): void {
+    this.packageCache.resize(maxSize)
+  }
+
+  /**
+   * Reset cache statistics without clearing cached data.
+   * Useful for starting a new measurement period.
+   */
+  resetCacheStats(): void {
+    this.packageCache.resetStats()
   }
 }

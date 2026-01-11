@@ -296,11 +296,11 @@ describe('Package.json Parsing and Validation', () => {
     })
 
     it('should handle URL dependencies', () => {
-      const deps = { tarball: 'https://example.com/package.tgz' }
+      const deps = { tarball: 'https://example.com.ai/package.tgz' }
       const result = parseDependencies(deps)
 
       expect(result[0].type).toBe('url')
-      expect(result[0].url).toBe('https://example.com/package.tgz')
+      expect(result[0].url).toBe('https://example.com.ai/package.tgz')
     })
 
     it('should handle empty dependencies object', () => {
@@ -716,7 +716,7 @@ describe('Package.json Parsing and Validation', () => {
 
     it('should accept bugs object with email', () => {
       const result = validateBugsField({
-        email: 'bugs@example.com',
+        email: 'bugs@example.com.ai',
       })
 
       expect(result.valid).toBe(true)
@@ -725,7 +725,7 @@ describe('Package.json Parsing and Validation', () => {
     it('should accept bugs object with both url and email', () => {
       const result = validateBugsField({
         url: 'https://github.com/user/repo/issues',
-        email: 'bugs@example.com',
+        email: 'bugs@example.com.ai',
       })
 
       expect(result.valid).toBe(true)
@@ -748,13 +748,13 @@ describe('Package.json Parsing and Validation', () => {
 
   describe('Homepage Validation', () => {
     it('should accept valid homepage URL', () => {
-      const result = validateHomepage('https://example.com')
+      const result = validateHomepage('https://example.com.ai')
 
       expect(result.valid).toBe(true)
     })
 
     it('should accept homepage with path', () => {
-      const result = validateHomepage('https://example.com/docs/readme')
+      const result = validateHomepage('https://example.com.ai/docs/readme')
 
       expect(result.valid).toBe(true)
     })
@@ -767,7 +767,7 @@ describe('Package.json Parsing and Validation', () => {
     })
 
     it('should reject non-http(s) URLs', () => {
-      const result = validateHomepage('ftp://example.com')
+      const result = validateHomepage('ftp://example.com.ai')
 
       expect(result.valid).toBe(false)
       expect(result.error?.code).toBe('INVALID_URL_PROTOCOL')
@@ -1171,7 +1171,7 @@ describe('Package.json Parsing and Validation', () => {
         },
         "repository": "github:user/repo",
         "bugs": "https://github.com/user/repo/issues",
-        "homepage": "https://example.com",
+        "homepage": "https://example.com.ai",
         "keywords": ["test", "package"],
         "license": "MIT",
         "files": ["dist/"],

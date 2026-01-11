@@ -53,6 +53,17 @@ export type {
 } from './cli/types.js'
 
 // =============================================================================
+// Shared types (single source of truth)
+// =============================================================================
+
+import type { InstallResult as _InstallResult } from './src/types.js'
+export type { InstallResult, PackageVersion, PackageUpdate } from './src/types.js'
+export { createEmptyInstallResult } from './src/types.js'
+
+// Re-alias for internal use
+type InstallResult = _InstallResult
+
+// =============================================================================
 // Service Definition (for dotdo integration)
 // =============================================================================
 
@@ -83,14 +94,7 @@ export interface NpmConfig {
   token?: string
 }
 
-/**
- * Install result type
- */
-export interface InstallResult {
-  added: Array<{ name: string; version: string }>
-  removed: Array<{ name: string; version: string }>
-  updated: Array<{ name: string; from: string; to: string }>
-}
+// InstallResult is now exported from './src/types.js' above
 
 /**
  * npm SDK interface
@@ -160,9 +164,14 @@ export function createNpm(_config: NpmConfig = {}): NpmSDK {
   // Placeholder implementation - actual implementation would use core modules
   return {
     install: async (_packages, _options) => ({
-      added: [],
+      installed: [],
       removed: [],
       updated: [],
+      stats: {
+        resolved: 0,
+        cached: 0,
+        duration: 0,
+      },
     }),
     uninstall: async () => {},
     run: async () => ({ exitCode: 0, output: '' }),
