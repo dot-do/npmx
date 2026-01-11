@@ -23,9 +23,14 @@ import {
   FetchError,
   TarballError,
   ExecError,
+  SecurityError,
 } from '../../core/errors/index.js'
 import { encodePackageName } from '../../core/package/name.js'
 import { LRUCache, type CacheStats } from '../../core/cache/lru.js'
+import {
+  SecurityPolicy,
+  type NpmSecurityConfig,
+} from '../../core/security/policy.js'
 import {
   fetchWithTimeout,
   FetchTimeoutError,
@@ -44,6 +49,17 @@ export interface NpmEnv extends BaseEnv {
 
   /** Service binding to bashx-do for shell execution */
   BASHX?: Fetcher
+
+  /** Security configuration for package installation */
+  NPM_SECURITY_CONFIG?: string // JSON-serialized NpmSecurityConfig
+}
+
+/**
+ * Options for NpmDO construction
+ */
+export interface NpmDOOptions {
+  /** Security policy configuration */
+  securityConfig?: NpmSecurityConfig
 }
 
 // ============================================================================
@@ -166,8 +182,83 @@ export class NpmDO extends DO<NpmEnv> {
   /** Registry URL */
   private registry: string = 'https://registry.npmjs.org'
 
-  constructor(ctx: DurableObjectState, env: NpmEnv) {
+  /**
+   * Security policy for package installation.
+   * Enforces allowlist/blocklist, license requirements, and vulnerability thresholds.
+   */
+  private securityPolicy: SecurityPolicy | null = null
+
+  constructor(ctx: DurableObjectState, env: NpmEnv, options?: NpmDOOptions) {
     super(ctx, env)
+
+    // Initialize security policy from options or environment
+    if (options?.securityConfig) {
+      this.securityPolicy = new SecurityPolicy(options.securityConfig)
+    } else if (env.NPM_SECURITY_CONFIG) {
+      try {
+        const config = JSON.parse(env.NPM_SECURITY_CONFIG) as NpmSecurityConfig
+        this.securityPolicy = new SecurityPolicy(config)
+      } catch {
+        console.warn('Failed to parse NPM_SECURITY_CONFIG, using no security policy')
+      }
+    }
+  }
+
+  // ============================================================================
+  // SECURITY
+  // ============================================================================
+
+  /**
+   * Set the security policy for this NpmDO instance.
+   * This allows per-agent or per-workspace security configurations.
+   */
+  setSecurityPolicy(config: NpmSecurityConfig): void {
+    this.securityPolicy = new SecurityPolicy(config)
+  }
+
+  /**
+   * Use a preset security policy.
+   * @param preset - 'restricted' (most limiting), 'standard' (common packages), or 'permissive' (minimal restrictions)
+   */
+  useSecurityPreset(preset: 'restricted' | 'standard' | 'permissive'): void {
+    this.securityPolicy = SecurityPolicy.preset(preset)
+  }
+
+  /**
+   * Get the current security policy (for inspection/debugging)
+   */
+  getSecurityPolicy(): NpmSecurityConfig | null {
+    return this.securityPolicy?.toJSON() ?? null
+  }
+
+  /**
+   * Check if a package is allowed by the security policy.
+   * Does not throw, returns check result.
+   */
+  checkPackageSecurity(packageName: string): { allowed: boolean; reason?: string } {
+    if (!this.securityPolicy) {
+      return { allowed: true }
+    }
+
+    const result = this.securityPolicy.check(packageName)
+    if (!result.allowed) {
+      return {
+        allowed: false,
+        reason: result.violations.map((v) => v.message).join('; '),
+      }
+    }
+    return { allowed: true }
+  }
+
+  /**
+   * Assert that a package is allowed by security policy.
+   * Throws SecurityError if not allowed.
+   */
+  private assertPackageSecurity(packageName: string): void {
+    if (!this.securityPolicy) {
+      return // No policy = allow all
+    }
+    this.securityPolicy.assert(packageName)
   }
 
   // ============================================================================
@@ -290,6 +381,9 @@ export class NpmDO extends DO<NpmEnv> {
 
     for (const pkg of packages) {
       try {
+        // SECURITY: Check if package is allowed by security policy
+        this.assertPackageSecurity(pkg.name)
+
         // Resolve package metadata
         const metadata = await this.getPackageMetadata(pkg.name, pkg.version)
         resolved++
@@ -444,6 +538,10 @@ export class NpmDO extends DO<NpmEnv> {
     const start = Date.now()
 
     try {
+      // SECURITY: Check if package is allowed by security policy
+      // For npx, the command name is typically the package name
+      this.assertPackageSecurity(command)
+
       // Resolve the command to a package
       const { packageName, binPath } = await this.resolveCommand(command)
 

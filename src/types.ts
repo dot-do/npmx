@@ -6,6 +6,14 @@
  * @module npmx/types
  */
 
+// Re-export security types for convenience
+export type {
+  NpmSecurityConfig,
+  SecurityCheckResult,
+  SecurityViolation,
+  VulnerabilitySeverity,
+} from '../core/security/policy.js'
+
 /**
  * Package version entry for install results
  */

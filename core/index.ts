@@ -54,3 +54,16 @@ export type {
   CacheStats,
 } from './cache/index.js'
 export { LRUCache } from './cache/index.js'
+
+// Security - policy-based security controls
+export * as security from './security/index.js'
+export type {
+  NpmSecurityConfig,
+  SecurityCheckResult,
+  SecurityViolation,
+  VulnerabilitySeverity,
+  ViolationType,
+  VulnerabilityInfo,
+  PackageSecurityMetadata,
+} from './security/index.js'
+export { SecurityPolicy } from './security/index.js'
