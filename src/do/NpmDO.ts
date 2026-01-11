@@ -37,6 +37,265 @@ import {
   DEFAULT_FETCH_TIMEOUT,
 } from './fetch-timeout.js'
 
+// ============================================================================
+// CAP'N WEB RPC CLIENT TYPES
+// ============================================================================
+
+/**
+ * RPC error with structured information for debugging
+ */
+export class RpcError extends Error {
+  readonly code: string
+  readonly stage?: number
+
+  constructor(code: string, message: string, stage?: number) {
+    super(message)
+    this.name = 'RpcError'
+    this.code = code
+    this.stage = stage
+  }
+}
+
+/**
+ * RPC client for FSX (filesystem) operations with promise pipelining support.
+ *
+ * Provides typed methods that wrap RPC calls to the fsx.do service.
+ * All methods return promises that can be awaited or pipelined.
+ */
+export interface FsxRpcClient {
+  /** Read file contents from the virtual filesystem */
+  readFile(path: string, options?: { encoding?: string }): Promise<string>
+
+  /** Write content to a file in the virtual filesystem */
+  writeFile(path: string, content: string, options?: { encoding?: string }): Promise<void>
+
+  /** Extract a tarball to a destination directory */
+  extractTarball(data: Uint8Array | number[], dest: string): Promise<void>
+
+  /** Read directory contents */
+  readdir(path: string, options?: { withFileTypes?: boolean }): Promise<Array<{ name: string; type: string }>>
+}
+
+/**
+ * RPC client for BASHX (shell execution) operations with promise pipelining support.
+ *
+ * Provides typed methods that wrap RPC calls to the bashx.do service.
+ */
+export interface BashxRpcClient {
+  /** Execute a command with arguments */
+  exec(command: string, args: string[], options?: { env?: Record<string, string> }): Promise<{
+    exitCode: number
+    stdout: string
+    stderr: string
+  }>
+
+  /** Run a shell script */
+  run(script: string, options?: { env?: Record<string, string> }): Promise<{
+    exitCode: number
+    stdout: string
+    stderr: string
+  }>
+}
+
+/**
+ * Pending operation for batching multiple RPC calls
+ */
+interface PendingOperation {
+  method: string
+  params: unknown
+  resolve: (value: unknown) => void
+  reject: (error: Error) => void
+}
+
+/**
+ * Create an FSX RPC client that wraps a Fetcher with promise pipelining.
+ *
+ * The client queues operations during the same microtask and batches them
+ * into a single fetch call, reducing network round trips.
+ *
+ * @param fetcher - The Fetcher binding to the FSX service
+ * @returns Typed FSX client with pipelining support
+ */
+export function createFsxRpcClient(fetcher: Fetcher): FsxRpcClient {
+  const pending: PendingOperation[] = []
+  let flushScheduled = false
+
+  const flush = async () => {
+    if (pending.length === 0) return
+
+    const batch = [...pending]
+    pending.length = 0
+    flushScheduled = false
+
+    try {
+      // If single operation, send as single request for compatibility
+      const payload = batch.length === 1
+        ? { method: batch[0].method, params: batch[0].params }
+        : batch.map(op => ({ method: op.method, params: op.params }))
+
+      const response = await fetcher.fetch('https://fsx.do/rpc', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json() as { error?: { code?: string; message?: string; stage?: number } }
+        const error = errorData.error || {}
+        const rpcError = new RpcError(
+          error.code || 'RPC_ERROR',
+          error.message || `RPC call failed with status ${response.status}`,
+          error.stage
+        )
+        batch.forEach(op => op.reject(rpcError))
+        return
+      }
+
+      const result = await response.json() as { data?: unknown } | Array<{ data?: unknown; error?: { code: string; message: string; stage?: number } }>
+
+      if (Array.isArray(result)) {
+        // Batch response
+        result.forEach((res, i) => {
+          if (res.error) {
+            batch[i].reject(new RpcError(res.error.code, res.error.message, res.error.stage))
+          } else {
+            batch[i].resolve(res.data)
+          }
+        })
+      } else {
+        // Single response
+        batch[0].resolve(result.data)
+      }
+    } catch (error) {
+      batch.forEach(op => op.reject(error as Error))
+    }
+  }
+
+  const scheduleFlush = () => {
+    if (!flushScheduled) {
+      flushScheduled = true
+      queueMicrotask(flush)
+    }
+  }
+
+  const call = <T>(method: string, params: unknown): Promise<T> => {
+    return new Promise((resolve, reject) => {
+      pending.push({ method, params, resolve: resolve as (v: unknown) => void, reject })
+      scheduleFlush()
+    })
+  }
+
+  return {
+    readFile(path: string, options?: { encoding?: string }): Promise<string> {
+      return call('readFile', { path, encoding: options?.encoding || 'utf-8' })
+    },
+
+    writeFile(path: string, content: string, options?: { encoding?: string }): Promise<void> {
+      return call('writeFile', { path, content, encoding: options?.encoding || 'utf-8' })
+    },
+
+    extractTarball(data: Uint8Array | number[], dest: string): Promise<void> {
+      const dataArray = data instanceof Uint8Array ? Array.from(data) : data
+      return call('extractTarball', { data: dataArray, dest })
+    },
+
+    readdir(path: string, options?: { withFileTypes?: boolean }): Promise<Array<{ name: string; type: string }>> {
+      return call('readdir', { path, withFileTypes: options?.withFileTypes ?? true })
+    },
+  }
+}
+
+/**
+ * Create a BASHX RPC client that wraps a Fetcher with promise pipelining.
+ *
+ * @param fetcher - The Fetcher binding to the BASHX service
+ * @returns Typed BASHX client with pipelining support
+ */
+export function createBashxRpcClient(fetcher: Fetcher): BashxRpcClient {
+  const pending: PendingOperation[] = []
+  let flushScheduled = false
+
+  const flush = async () => {
+    if (pending.length === 0) return
+
+    const batch = [...pending]
+    pending.length = 0
+    flushScheduled = false
+
+    try {
+      const payload = batch.length === 1
+        ? { method: batch[0].method, params: batch[0].params }
+        : batch.map(op => ({ method: op.method, params: op.params }))
+
+      const response = await fetcher.fetch('https://bashx.do/rpc', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json() as { error?: { code?: string; message?: string; stage?: number } }
+        const error = errorData.error || {}
+        const rpcError = new RpcError(
+          error.code || 'RPC_ERROR',
+          error.message || `RPC call failed with status ${response.status}`,
+          error.stage
+        )
+        batch.forEach(op => op.reject(rpcError))
+        return
+      }
+
+      const result = await response.json() as { data?: unknown } | Array<{ data?: unknown; error?: { code: string; message: string; stage?: number } }>
+
+      if (Array.isArray(result)) {
+        result.forEach((res, i) => {
+          if (res.error) {
+            batch[i].reject(new RpcError(res.error.code, res.error.message, res.error.stage))
+          } else {
+            batch[i].resolve(res.data)
+          }
+        })
+      } else {
+        batch[0].resolve(result.data)
+      }
+    } catch (error) {
+      batch.forEach(op => op.reject(error as Error))
+    }
+  }
+
+  const scheduleFlush = () => {
+    if (!flushScheduled) {
+      flushScheduled = true
+      queueMicrotask(flush)
+    }
+  }
+
+  const call = <T>(method: string, params: unknown): Promise<T> => {
+    return new Promise((resolve, reject) => {
+      pending.push({ method, params, resolve: resolve as (v: unknown) => void, reject })
+      scheduleFlush()
+    })
+  }
+
+  return {
+    exec(command: string, args: string[], options?: { env?: Record<string, string> }): Promise<{
+      exitCode: number
+      stdout: string
+      stderr: string
+    }> {
+      return call('exec', { command, args, options: { env: options?.env } })
+    },
+
+    run(script: string, options?: { env?: Record<string, string> }): Promise<{
+      exitCode: number
+      stdout: string
+      stderr: string
+    }> {
+      return call('run', { script, options: { env: options?.env } })
+    },
+  }
+}
+
 /**
  * Extended environment for NpmDO with npm-specific bindings
  */
@@ -188,8 +447,28 @@ export class NpmDO extends DO<NpmEnv> {
    */
   private securityPolicy: SecurityPolicy | null = null
 
+  /**
+   * RPC client for fsx operations with promise pipelining.
+   * Batches multiple filesystem calls into single network round trips.
+   */
+  private fsxClient: FsxRpcClient | null = null
+
+  /**
+   * RPC client for bashx operations with promise pipelining.
+   * Batches multiple shell execution calls into single network round trips.
+   */
+  private bashxClient: BashxRpcClient | null = null
+
   constructor(ctx: DurableObjectState, env: NpmEnv, options?: NpmDOOptions) {
     super(ctx, env)
+
+    // Initialize RPC clients for cross-DO calls with pipelining
+    if (env.FSX) {
+      this.fsxClient = createFsxRpcClient(env.FSX)
+    }
+    if (env.BASHX) {
+      this.bashxClient = createBashxRpcClient(env.BASHX)
+    }
 
     // Initialize security policy from options or environment
     if (options?.securityConfig) {
@@ -855,5 +1134,70 @@ export class NpmDO extends DO<NpmEnv> {
    */
   resetCacheStats(): void {
     this.packageCache.resetStats()
+  }
+
+  // ============================================================================
+  // CROSS-DO RESOLUTION
+  // ============================================================================
+
+  /**
+   * Extended $ property with cross-DO service resolution.
+   *
+   * Extends the base WorkflowContext with a `resolve` method for
+   * accessing cross-DO services with promise pipelining support.
+   *
+   * @example
+   * ```typescript
+   * const fsx = this.$.resolve('fsx.do')
+   * const content = await fsx.fs.read('/package.json')
+   * ```
+   */
+  override get $() {
+    const baseContext = super.$
+    const self = this
+
+    // Create a proxy that extends the base context with resolve
+    return new Proxy(baseContext, {
+      get(target, prop) {
+        if (prop === 'resolve') {
+          return (service: string) => self.resolveService(service)
+        }
+        return Reflect.get(target, prop)
+      },
+    }) as typeof baseContext & { resolve: (service: string) => unknown }
+  }
+
+  /**
+   * Resolve a cross-DO service by name.
+   *
+   * Returns a proxy object that captures method calls for promise pipelining.
+   * The proxy builds up operation chains that can be batched into single
+   * network round trips.
+   *
+   * @param service - Service name (e.g., 'fsx.do', 'bashx.do')
+   * @returns Proxy object for the service
+   */
+  private resolveService(service: string): unknown {
+    // For fsx.do, return a proxy that provides fs operations
+    if (service === 'fsx.do' && this.fsxClient) {
+      return {
+        fs: {
+          read: (path: string) => this.fsxClient!.readFile(path),
+          write: (path: string, content: string) => this.fsxClient!.writeFile(path, content),
+          readdir: (path: string) => this.fsxClient!.readdir(path),
+        },
+      }
+    }
+
+    // For bashx.do, return a proxy that provides shell operations
+    if (service === 'bashx.do' && this.bashxClient) {
+      return {
+        exec: (command: string, args: string[]) => this.bashxClient!.exec(command, args),
+        run: (script: string) => this.bashxClient!.run(script),
+      }
+    }
+
+    // Return empty proxy for unknown services
+    return {}
   }
 }
