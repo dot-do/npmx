@@ -7,7 +7,7 @@ import {
   SearchResult,
   CacheConfig,
   MemoryRegistry,
-} from '../../src/core/backend'
+} from '../../core/backend'
 
 describe('RegistryBackend Interface', () => {
   describe('Interface Definition', () => {

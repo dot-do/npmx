@@ -14,7 +14,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 // Import the validation function that will be implemented
-import { validateNamespace, NAMESPACE_MAX_LENGTH, NAMESPACE_REGEX } from '../../src/do/namespace'
+import { validateNamespace, NAMESPACE_MAX_LENGTH, NAMESPACE_REGEX } from '../../do/namespace'
 
 // ============================================================================
 // VALIDATION FUNCTION TESTS

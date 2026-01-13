@@ -57,6 +57,27 @@ export class RpcError extends Error {
 }
 
 /**
+ * Symbol to identify pipeline promises
+ */
+const PIPELINE_PROMISE_SYMBOL = Symbol('PipelinePromise')
+
+/**
+ * Pipeline promise that supports property access and method chaining
+ * on unresolved values - Cap'n Web style promise pipelining.
+ */
+export interface PipelinePromise<T> extends Promise<T> {
+  [PIPELINE_PROMISE_SYMBOL]: true
+  /** Access nested properties on the future result */
+  [key: string]: unknown
+  /** Map over array results (magic map pattern) */
+  map<U>(fn: (item: T extends Array<infer I> ? I : never) => U): PipelinePromise<U[]>
+  /** Filter array results */
+  filter(fn: (item: T extends Array<infer I> ? I : never) => boolean): PipelinePromise<T>
+  /** Parse JSON result */
+  parse(): PipelinePromise<unknown>
+}
+
+/**
  * RPC client for FSX (filesystem) operations with promise pipelining support.
  *
  * Provides typed methods that wrap RPC calls to the fsx.do service.
@@ -64,16 +85,16 @@ export class RpcError extends Error {
  */
 export interface FsxRpcClient {
   /** Read file contents from the virtual filesystem */
-  readFile(path: string, options?: { encoding?: string }): Promise<string>
+  readFile(path: string, options?: { encoding?: string }): PipelinePromise<string>
 
   /** Write content to a file in the virtual filesystem */
-  writeFile(path: string, content: string, options?: { encoding?: string }): Promise<void>
+  writeFile(path: string, content: string, options?: { encoding?: string }): PipelinePromise<void>
 
   /** Extract a tarball to a destination directory */
-  extractTarball(data: Uint8Array | number[], dest: string): Promise<void>
+  extractTarball(data: Uint8Array | number[], dest: string): PipelinePromise<void>
 
   /** Read directory contents */
-  readdir(path: string, options?: { withFileTypes?: boolean }): Promise<Array<{ name: string; type: string }>>
+  readdir(path: string, options?: { withFileTypes?: boolean }): PipelinePromise<Array<{ name: string; type: string }>>
 }
 
 /**
@@ -83,14 +104,14 @@ export interface FsxRpcClient {
  */
 export interface BashxRpcClient {
   /** Execute a command with arguments */
-  exec(command: string, args: string[], options?: { env?: Record<string, string> }): Promise<{
+  exec(command: string, args: string[], options?: { env?: Record<string, string> }): PipelinePromise<{
     exitCode: number
     stdout: string
     stderr: string
   }>
 
   /** Run a shell script */
-  run(script: string, options?: { env?: Record<string, string> }): Promise<{
+  run(script: string, options?: { env?: Record<string, string> }): PipelinePromise<{
     exitCode: number
     stdout: string
     stderr: string
@@ -108,24 +129,56 @@ interface PendingOperation {
 }
 
 /**
- * Create an FSX RPC client that wraps a Fetcher with promise pipelining.
- *
- * The client queues operations during the same microtask and batches them
- * into a single fetch call, reducing network round trips.
- *
- * @param fetcher - The Fetcher binding to the FSX service
- * @returns Typed FSX client with pipelining support
+ * Batch manager that handles operation queueing and flushing.
+ * Uses a short timer delay to allow Promise.all to collect all promises
+ * before flushing the batch.
  */
-export function createFsxRpcClient(fetcher: Fetcher): FsxRpcClient {
-  const pending: PendingOperation[] = []
-  let flushScheduled = false
+class BatchManager {
+  private pending: PendingOperation[] = []
+  private flushTimer: ReturnType<typeof setTimeout> | null = null
+  private fetcher: Fetcher
+  private endpoint: string
 
-  const flush = async () => {
-    if (pending.length === 0) return
+  // Batch window in milliseconds - allows Promise.all to collect promises
+  private static readonly BATCH_WINDOW_MS = 0
 
-    const batch = [...pending]
-    pending.length = 0
-    flushScheduled = false
+  constructor(fetcher: Fetcher, endpoint: string) {
+    this.fetcher = fetcher
+    this.endpoint = endpoint
+  }
+
+  /**
+   * Queue an operation for batching.
+   * Returns a promise that resolves when the operation completes.
+   */
+  call<T>(method: string, params: unknown): Promise<T> {
+    return new Promise((resolve, reject) => {
+      this.pending.push({ method, params, resolve: resolve as (v: unknown) => void, reject })
+      this.scheduleFlush()
+    })
+  }
+
+  /**
+   * Schedule a flush using setTimeout with a small delay.
+   * This allows Promise.all to collect all promises synchronously
+   * before the flush occurs.
+   */
+  private scheduleFlush(): void {
+    if (this.flushTimer === null) {
+      this.flushTimer = setTimeout(() => this.flush(), BatchManager.BATCH_WINDOW_MS)
+    }
+  }
+
+  /**
+   * Flush all pending operations in a single batch request.
+   */
+  private async flush(): Promise<void> {
+    this.flushTimer = null
+
+    if (this.pending.length === 0) return
+
+    const batch = [...this.pending]
+    this.pending = []
 
     try {
       // If single operation, send as single request for compatibility
@@ -133,7 +186,7 @@ export function createFsxRpcClient(fetcher: Fetcher): FsxRpcClient {
         ? { method: batch[0].method, params: batch[0].params }
         : batch.map(op => ({ method: op.method, params: op.params }))
 
-      const response = await fetcher.fetch('https://fsx.do/rpc', {
+      const response = await this.fetcher.fetch(this.endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -170,37 +223,121 @@ export function createFsxRpcClient(fetcher: Fetcher): FsxRpcClient {
       batch.forEach(op => op.reject(error as Error))
     }
   }
+}
 
-  const scheduleFlush = () => {
-    if (!flushScheduled) {
-      flushScheduled = true
-      queueMicrotask(flush)
-    }
-  }
+/**
+ * Create a pipeline promise that supports property access on unresolved values.
+ * This enables Cap'n Web style promise pipelining.
+ */
+function createPipelinePromise<T>(promise: Promise<T>): PipelinePromise<T> {
+  // Create a proxy over the promise that intercepts property access
+  const proxy = new Proxy(promise, {
+    get(target, prop, receiver) {
+      // Handle promise methods
+      if (prop === 'then' || prop === 'catch' || prop === 'finally') {
+        const method = target[prop as keyof Promise<T>] as Function
+        return method.bind(target)
+      }
 
-  const call = <T>(method: string, params: unknown): Promise<T> => {
-    return new Promise((resolve, reject) => {
-      pending.push({ method, params, resolve: resolve as (v: unknown) => void, reject })
-      scheduleFlush()
-    })
-  }
+      // Handle pipeline promise symbol
+      if (prop === PIPELINE_PROMISE_SYMBOL) {
+        return true
+      }
+
+      // Handle Symbol.toStringTag for proper [object Promise] behavior
+      if (prop === Symbol.toStringTag) {
+        return 'Promise'
+      }
+
+      // Handle map (magic map pattern)
+      if (prop === 'map') {
+        return (fn: (item: unknown) => unknown) => {
+          const mappedPromise = target.then((value: T) => {
+            if (Array.isArray(value)) {
+              return value.map(fn)
+            }
+            throw new TypeError('map can only be called on array results')
+          })
+          return createPipelinePromise(mappedPromise)
+        }
+      }
+
+      // Handle filter
+      if (prop === 'filter') {
+        return (fn: (item: unknown) => boolean) => {
+          const filteredPromise = target.then((value: T) => {
+            if (Array.isArray(value)) {
+              return value.filter(fn)
+            }
+            throw new TypeError('filter can only be called on array results')
+          })
+          return createPipelinePromise(filteredPromise)
+        }
+      }
+
+      // Handle parse (for JSON parsing)
+      if (prop === 'parse') {
+        return () => {
+          const parsedPromise = target.then((value: T) => {
+            if (typeof value === 'string') {
+              return JSON.parse(value)
+            }
+            return value
+          })
+          return createPipelinePromise(parsedPromise)
+        }
+      }
+
+      // For other properties, chain a .then that accesses the property
+      if (typeof prop === 'string') {
+        const chainedPromise = target.then((value: T) => {
+          if (value === null || value === undefined) {
+            return undefined
+          }
+          return (value as Record<string, unknown>)[prop]
+        })
+        return createPipelinePromise(chainedPromise)
+      }
+
+      return Reflect.get(target, prop, receiver)
+    },
+  }) as PipelinePromise<T>
+
+  return proxy
+}
+
+/**
+ * Create an FSX RPC client that wraps a Fetcher with promise pipelining.
+ *
+ * The client queues operations during the same event loop tick and batches them
+ * into a single fetch call, reducing network round trips.
+ *
+ * @param fetcher - The Fetcher binding to the FSX service
+ * @returns Typed FSX client with pipelining support
+ */
+export function createFsxRpcClient(fetcher: Fetcher): FsxRpcClient {
+  const batchManager = new BatchManager(fetcher, 'https://fsx.do/rpc')
 
   return {
-    readFile(path: string, options?: { encoding?: string }): Promise<string> {
-      return call('readFile', { path, encoding: options?.encoding || 'utf-8' })
+    readFile(path: string, options?: { encoding?: string }): PipelinePromise<string> {
+      const promise = batchManager.call<string>('readFile', { path, encoding: options?.encoding || 'utf-8' })
+      return createPipelinePromise(promise)
     },
 
-    writeFile(path: string, content: string, options?: { encoding?: string }): Promise<void> {
-      return call('writeFile', { path, content, encoding: options?.encoding || 'utf-8' })
+    writeFile(path: string, content: string, options?: { encoding?: string }): PipelinePromise<void> {
+      const promise = batchManager.call<void>('writeFile', { path, content, encoding: options?.encoding || 'utf-8' })
+      return createPipelinePromise(promise)
     },
 
-    extractTarball(data: Uint8Array | number[], dest: string): Promise<void> {
+    extractTarball(data: Uint8Array | number[], dest: string): PipelinePromise<void> {
       const dataArray = data instanceof Uint8Array ? Array.from(data) : data
-      return call('extractTarball', { data: dataArray, dest })
+      const promise = batchManager.call<void>('extractTarball', { data: dataArray, dest })
+      return createPipelinePromise(promise)
     },
 
-    readdir(path: string, options?: { withFileTypes?: boolean }): Promise<Array<{ name: string; type: string }>> {
-      return call('readdir', { path, withFileTypes: options?.withFileTypes ?? true })
+    readdir(path: string, options?: { withFileTypes?: boolean }): PipelinePromise<Array<{ name: string; type: string }>> {
+      const promise = batchManager.call<Array<{ name: string; type: string }>>('readdir', { path, withFileTypes: options?.withFileTypes ?? true })
+      return createPipelinePromise(promise)
     },
   }
 }
@@ -212,86 +349,25 @@ export function createFsxRpcClient(fetcher: Fetcher): FsxRpcClient {
  * @returns Typed BASHX client with pipelining support
  */
 export function createBashxRpcClient(fetcher: Fetcher): BashxRpcClient {
-  const pending: PendingOperation[] = []
-  let flushScheduled = false
-
-  const flush = async () => {
-    if (pending.length === 0) return
-
-    const batch = [...pending]
-    pending.length = 0
-    flushScheduled = false
-
-    try {
-      const payload = batch.length === 1
-        ? { method: batch[0].method, params: batch[0].params }
-        : batch.map(op => ({ method: op.method, params: op.params }))
-
-      const response = await fetcher.fetch('https://bashx.do/rpc', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-
-      if (!response.ok) {
-        const errorData = await response.json() as { error?: { code?: string; message?: string; stage?: number } }
-        const error = errorData.error || {}
-        const rpcError = new RpcError(
-          error.code || 'RPC_ERROR',
-          error.message || `RPC call failed with status ${response.status}`,
-          error.stage
-        )
-        batch.forEach(op => op.reject(rpcError))
-        return
-      }
-
-      const result = await response.json() as { data?: unknown } | Array<{ data?: unknown; error?: { code: string; message: string; stage?: number } }>
-
-      if (Array.isArray(result)) {
-        result.forEach((res, i) => {
-          if (res.error) {
-            batch[i].reject(new RpcError(res.error.code, res.error.message, res.error.stage))
-          } else {
-            batch[i].resolve(res.data)
-          }
-        })
-      } else {
-        batch[0].resolve(result.data)
-      }
-    } catch (error) {
-      batch.forEach(op => op.reject(error as Error))
-    }
-  }
-
-  const scheduleFlush = () => {
-    if (!flushScheduled) {
-      flushScheduled = true
-      queueMicrotask(flush)
-    }
-  }
-
-  const call = <T>(method: string, params: unknown): Promise<T> => {
-    return new Promise((resolve, reject) => {
-      pending.push({ method, params, resolve: resolve as (v: unknown) => void, reject })
-      scheduleFlush()
-    })
-  }
+  const batchManager = new BatchManager(fetcher, 'https://bashx.do/rpc')
 
   return {
-    exec(command: string, args: string[], options?: { env?: Record<string, string> }): Promise<{
+    exec(command: string, args: string[], options?: { env?: Record<string, string> }): PipelinePromise<{
       exitCode: number
       stdout: string
       stderr: string
     }> {
-      return call('exec', { command, args, options: { env: options?.env } })
+      const promise = batchManager.call<{ exitCode: number; stdout: string; stderr: string }>('exec', { command, args, options: { env: options?.env } })
+      return createPipelinePromise(promise)
     },
 
-    run(script: string, options?: { env?: Record<string, string> }): Promise<{
+    run(script: string, options?: { env?: Record<string, string> }): PipelinePromise<{
       exitCode: number
       stdout: string
       stderr: string
     }> {
-      return call('run', { script, options: { env: options?.env } })
+      const promise = batchManager.call<{ exitCode: number; stdout: string; stderr: string }>('run', { script, options: { env: options?.env } })
+      return createPipelinePromise(promise)
     },
   }
 }
@@ -1141,10 +1217,8 @@ export class NpmDO extends DO<NpmEnv> {
   // ============================================================================
 
   /**
-   * Extended $ property with cross-DO service resolution.
-   *
-   * Extends the base WorkflowContext with a `resolve` method for
-   * accessing cross-DO services with promise pipelining support.
+   * Override createWorkflowContext to extend the base with a `resolve` method
+   * for accessing cross-DO services with promise pipelining support.
    *
    * @example
    * ```typescript
@@ -1152,19 +1226,30 @@ export class NpmDO extends DO<NpmEnv> {
    * const content = await fsx.fs.read('/package.json')
    * ```
    */
-  override get $() {
-    const baseContext = super.$
+  protected override createWorkflowContext() {
+    const baseContext = super.createWorkflowContext()
     const self = this
+
+    // List of known properties for hasOwnProperty checks
+    const knownProperties = new Set(['resolve'])
 
     // Create a proxy that extends the base context with resolve
     return new Proxy(baseContext, {
-      get(target, prop) {
+      get(target, prop, receiver) {
         if (prop === 'resolve') {
+          // Return our resolve function that delegates to resolveService
           return (service: string) => self.resolveService(service)
         }
-        return Reflect.get(target, prop)
+        // Delegate to base context
+        return Reflect.get(target, prop, receiver)
       },
-    }) as typeof baseContext & { resolve: (service: string) => unknown }
+      has(target, prop) {
+        if (knownProperties.has(String(prop))) {
+          return true
+        }
+        return Reflect.has(target, prop)
+      },
+    })
   }
 
   /**

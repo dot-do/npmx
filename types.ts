@@ -12,7 +12,7 @@ export type {
   SecurityCheckResult,
   SecurityViolation,
   VulnerabilitySeverity,
-} from '../core/security/policy.js'
+} from './core/security/policy.js'
 
 /**
  * Package version entry for install results

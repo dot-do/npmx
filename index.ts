@@ -56,9 +56,9 @@ export type {
 // Shared types (single source of truth)
 // =============================================================================
 
-import type { InstallResult as _InstallResult } from './src/types.js'
-export type { InstallResult, PackageVersion, PackageUpdate } from './src/types.js'
-export { createEmptyInstallResult } from './src/types.js'
+import type { InstallResult as _InstallResult } from './types.js'
+export type { InstallResult, PackageVersion, PackageUpdate } from './types.js'
+export { createEmptyInstallResult } from './types.js'
 
 // Re-alias for internal use
 type InstallResult = _InstallResult
@@ -94,7 +94,7 @@ export interface NpmConfig {
   token?: string
 }
 
-// InstallResult is now exported from './src/types.js' above
+// InstallResult is now exported from './types.js' above
 
 /**
  * npm SDK interface
@@ -148,8 +148,12 @@ export interface NpmSDK {
 /**
  * Create an npm SDK instance
  *
+ * @experimental This API returns placeholder data. Full implementation pending.
+ * All methods return empty arrays or stub values. Use the core/ modules
+ * directly for actual package operations until this SDK is fully implemented.
+ *
  * @param config - Configuration options
- * @returns An npm SDK instance
+ * @returns An npm SDK instance with placeholder methods
  *
  * @example
  * ```typescript
@@ -160,10 +164,12 @@ export interface NpmSDK {
  * await npm.run('build')
  * ```
  */
-export function createNpm(_config: NpmConfig = {}): NpmSDK {
-  // Placeholder implementation - actual implementation would use core modules
+export function createNpm(config: NpmConfig = {}): NpmSDK {
+  // @experimental - Placeholder implementation
+  // TODO: Wire up to core/ modules (resolver, tarball, package)
+  void config // Acknowledge config param for future use
   return {
-    install: async (_packages, _options) => ({
+    install: async () => ({
       installed: [],
       removed: [],
       updated: [],
@@ -184,6 +190,10 @@ export function createNpm(_config: NpmConfig = {}): NpmSDK {
 /**
  * Execute a package binary (npx-style)
  *
+ * @experimental This API returns placeholder data. Full implementation pending.
+ * Currently returns an empty success result without executing any command.
+ * Use bashx.do for actual command execution until this is fully implemented.
+ *
  * @param command - Command/package to run
  * @param args - Arguments to pass
  * @param options - Execution options
@@ -200,16 +210,23 @@ export function createNpm(_config: NpmConfig = {}): NpmSDK {
  * ```
  */
 export async function npx(
-  _command: string,
-  _args: string[] = [],
-  _options: NpmConfig = {}
+  command: string,
+  args: string[] = [],
+  options: NpmConfig = {}
 ): Promise<{ exitCode: number; output: string }> {
-  // Placeholder implementation
+  // @experimental - Placeholder implementation
+  // TODO: Implement package download, caching, and execution via bashx
+  void command
+  void args
+  void options
   return { exitCode: 0, output: '' }
 }
 
 /**
  * Default npm SDK singleton
+ *
+ * @experimental This API returns placeholder data. See {@link createNpm} for details.
+ * All methods return empty arrays or stub values until fully implemented.
  *
  * @example
  * ```typescript

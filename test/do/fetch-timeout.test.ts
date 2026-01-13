@@ -13,7 +13,7 @@ import {
   FetchTimeoutError,
   DEFAULT_FETCH_TIMEOUT,
   type FetchTimeoutOptions,
-} from '../../src/do/fetch-timeout.js'
+} from '../../do/fetch-timeout.js'
 
 /**
  * Creates a mock fetch that properly responds to abort signals
@@ -126,11 +126,16 @@ describe('fetchWithTimeout', () => {
 
       const responsePromise = fetchWithTimeout('https://registry.npmjs.org/slow-package')
 
+      // Attach rejection handler BEFORE advancing timers to avoid unhandled rejection
+      const errorPromise = responsePromise.catch((e) => e as Error)
+
       // Advance time past timeout
       await vi.advanceTimersByTimeAsync(30001)
 
-      await expect(responsePromise).rejects.toThrow(FetchTimeoutError)
-      await expect(responsePromise).rejects.toThrow(/timed out after 30000ms/)
+      const caughtError = await errorPromise
+
+      expect(caughtError).toBeInstanceOf(FetchTimeoutError)
+      expect(caughtError?.message).toMatch(/timed out after 30000ms/)
     })
 
     it('should use custom timeout when specified', async () => {
@@ -142,11 +147,16 @@ describe('fetchWithTimeout', () => {
         { timeout: 5000 }
       )
 
+      // Attach rejection handler BEFORE advancing timers
+      const errorPromise = responsePromise.catch((e) => e as Error)
+
       // Should timeout at 5s
       await vi.advanceTimersByTimeAsync(5001)
 
-      await expect(responsePromise).rejects.toThrow(FetchTimeoutError)
-      await expect(responsePromise).rejects.toThrow(/timed out after 5000ms/)
+      const caughtError = await errorPromise
+
+      expect(caughtError).toBeInstanceOf(FetchTimeoutError)
+      expect(caughtError?.message).toMatch(/timed out after 5000ms/)
     })
 
     it('should include URL in timeout error message', async () => {
@@ -155,9 +165,14 @@ describe('fetchWithTimeout', () => {
       const url = 'https://registry.npmjs.org/test-package'
       const responsePromise = fetchWithTimeout(url, {}, { timeout: 1000 })
 
+      // Attach rejection handler BEFORE advancing timers
+      const errorPromise = responsePromise.catch((e) => e as Error)
+
       await vi.advanceTimersByTimeAsync(1001)
 
-      await expect(responsePromise).rejects.toThrow(url)
+      const caughtError = await errorPromise
+
+      expect(caughtError?.message).toContain(url)
     })
 
     it('should clear timeout on successful response', async () => {
@@ -182,9 +197,15 @@ describe('fetchWithTimeout', () => {
       )
 
       const responsePromise = fetchWithTimeout('https://example.com')
+
+      // Attach rejection handler BEFORE running timers
+      const errorPromise = responsePromise.catch((e) => e as Error)
+
       await vi.runAllTimersAsync()
 
-      await expect(responsePromise).rejects.toThrow('Network error')
+      const caughtError = await errorPromise
+
+      expect(caughtError?.message).toBe('Network error')
       expect(clearTimeoutSpy).toHaveBeenCalled()
     })
   })
@@ -204,10 +225,16 @@ describe('fetchWithTimeout', () => {
         { timeout: 1000 }
       )
 
+      // Attach rejection handler BEFORE advancing timers
+      const errorPromise = responsePromise.catch((e) => e as Error)
+
       await vi.advanceTimersByTimeAsync(1001)
 
       expect(abortSignal?.aborted).toBe(true)
-      await expect(responsePromise).rejects.toThrow(FetchTimeoutError)
+
+      const caughtError = await errorPromise
+
+      expect(caughtError).toBeInstanceOf(FetchTimeoutError)
     })
 
     it('should merge with existing signal', async () => {
@@ -307,6 +334,9 @@ describe('fetchWithTimeout', () => {
         { timeout: 1000, retries: 2 }
       )
 
+      // Attach rejection handler BEFORE advancing timers
+      const errorPromise = responsePromise.catch((e) => e as Error)
+
       // First timeout
       await vi.advanceTimersByTimeAsync(1001)
       // Second timeout (retry 1)
@@ -314,7 +344,9 @@ describe('fetchWithTimeout', () => {
       // Third timeout (retry 2)
       await vi.advanceTimersByTimeAsync(1001)
 
-      await expect(responsePromise).rejects.toThrow(FetchTimeoutError)
+      const caughtError = await errorPromise
+
+      expect(caughtError).toBeInstanceOf(FetchTimeoutError)
     })
 
     it('should use exponential backoff between retries when configured', async () => {
@@ -349,7 +381,15 @@ describe('fetchWithTimeout', () => {
       // Final timeout - no more retries
       await vi.advanceTimersByTimeAsync(101)
 
-      await expect(responsePromise).rejects.toThrow(FetchTimeoutError)
+      // Capture error once to avoid unhandled rejection warnings
+      let caughtError: Error | undefined
+      try {
+        await responsePromise
+      } catch (e) {
+        caughtError = e as Error
+      }
+
+      expect(caughtError).toBeInstanceOf(FetchTimeoutError)
     })
 
     it('should not retry on non-timeout errors', async () => {
@@ -368,7 +408,15 @@ describe('fetchWithTimeout', () => {
 
       await vi.runAllTimersAsync()
 
-      await expect(responsePromise).rejects.toThrow('Network error')
+      // Capture error once to avoid unhandled rejection warnings
+      let caughtError: Error | undefined
+      try {
+        await responsePromise
+      } catch (e) {
+        caughtError = e as Error
+      }
+
+      expect(caughtError?.message).toBe('Network error')
       expect(callCount).toBe(1)
     })
   })
