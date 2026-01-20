@@ -30,6 +30,7 @@ import { LRUCache, type CacheStats } from '../../core/cache/lru.js'
 import {
   SecurityPolicy,
   type NpmSecurityConfig,
+  type SecurityViolation,
 } from '../../core/security/policy.js'
 import {
   fetchWithTimeout,
@@ -599,7 +600,7 @@ export class NpmDO extends DO<NpmEnv> {
     if (!result.allowed) {
       return {
         allowed: false,
-        reason: result.violations.map((v) => v.message).join('; '),
+        reason: result.violations.map((v: SecurityViolation) => v.message).join('; '),
       }
     }
     return { allowed: true }

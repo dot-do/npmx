@@ -34,11 +34,11 @@ export type NpmErrorCode =
  * Context for package-related errors
  */
 export interface NpmErrorContext {
-  package?: string
-  version?: string
-  registry?: string
-  path?: string
-  cause?: string
+  package?: string | undefined
+  version?: string | undefined
+  registry?: string | undefined
+  path?: string | undefined
+  cause?: string | undefined
 }
 
 /**
@@ -48,8 +48,8 @@ export interface NpmErrorJSON {
   name: string
   code: NpmErrorCode
   message: string
-  context?: NpmErrorContext
-  stack?: string
+  context?: NpmErrorContext | undefined
+  stack?: string | undefined
 }
 
 // =============================================================================
