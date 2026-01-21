@@ -107,6 +107,18 @@ function addPackagesToLockfile(
 export function parseLockFile(lockfile: LockFile): DependencyTree {
   const resolved: Record<string, DependencyNode> = {}
 
+  // Helper to split path into segments properly
+  // Handles both "node_modules/lodash" and "node_modules/a/node_modules/b" formats
+  function splitNodeModulesPath(path: string): string[] {
+    // Add leading slash to make split work consistently
+    // "node_modules/lodash" -> "/node_modules/lodash" -> ["", "lodash"] after split
+    const normalized = path.startsWith('/') ? path : '/' + path
+    // Split by /node_modules/ to get segments
+    const segments = normalized.split('/node_modules/')
+    // Filter out empty segments and return just the package names
+    return segments.filter((s) => s !== '')
+  }
+
   for (const [path, entry] of Object.entries(lockfile.packages)) {
     if (path === '') {
       // Root entry - skip
@@ -114,11 +126,11 @@ export function parseLockFile(lockfile: LockFile): DependencyTree {
     }
 
     // Extract package name from path
-    const parts = path.split('/node_modules/')
-    const name = parts[parts.length - 1]
+    const segments = splitNodeModulesPath(path)
+    const name = segments[segments.length - 1]
 
-    // Check if this is a nested dependency
-    const isNested = parts.length > 2
+    // Check if this is a nested dependency (more than one segment)
+    const isNested = segments.length > 1
 
     if (!isNested && name !== undefined) {
       resolved[name] = lockFileEntryToNode(name, entry)
@@ -130,12 +142,11 @@ export function parseLockFile(lockfile: LockFile): DependencyTree {
   for (const [path, entry] of Object.entries(lockfile.packages)) {
     if (path === '') continue
 
-    const parts = path.split('/node_modules/')
-    if (parts.length > 2) {
+    const segments = splitNodeModulesPath(path)
+    if (segments.length > 1) {
       // This is a nested dependency
-      const parentPath = parts.slice(0, -1).join('/node_modules/')
-      const parentName = parentPath.split('/node_modules/').pop()!
-      const name = parts[parts.length - 1]
+      const parentName = segments[segments.length - 2]
+      const name = segments[segments.length - 1]
 
       if (parentName === undefined || name === undefined) continue
 
