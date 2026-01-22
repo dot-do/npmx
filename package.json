@@ -37,8 +37,16 @@
     "wrangler": "^3.0.0"
   },
   "peerDependencies": {
-    "@dotdo/fsx": "*",
-    "@dotdo/bashx": "*"
+    "@dotdo/fsx": "workspace:*",
+    "bashx.do": "workspace:*"
+  },
+  "peerDependenciesMeta": {
+    "@dotdo/fsx": {
+      "optional": true
+    },
+    "bashx.do": {
+      "optional": true
+    }
   },
   "keywords": ["npm", "npx", "edge", "cloudflare", "workers", "package-manager"],
   "license": "MIT"
